@@ -266,8 +266,8 @@ const DiskSeeksPanel = ({ data }) => {
   return (
     <div>
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>Head: <span style={{ color: C.accent }}>{data.head}</span> {data.note && <span style={{ color: C.yellow }}> (stub)</span>}</div>
-      {renderLine(data.cscan_order, C.blue, "C-SCAN (Sanat)")}
-      {renderLine(data.sstf_order, C.orange, "SSTF (Sanat)")}
+      {renderLine(data.cscan_order, C.blue, "C-SCAN")}
+      {renderLine(data.sstf_order, C.orange, "SSTF")}
     </div>
   );
 };
