@@ -22,7 +22,6 @@ const C = {
 
 const JOB_COLORS = { EXAM: C.exam, EVALUATION: C.evaluation, RESEARCH: C.research, PRACTICE: C.practice };
 
-// Aligned with Shakti's shared.py State enum
 const STATE_COLORS = {
   NEW: C.blue,
   READY: C.green,
@@ -95,7 +94,7 @@ const Panel = ({ title, icon, children, span = 1 }) => (
 
 // ─── GANTT CHART ────────────────────────────────────────────────────────────
 const GanttChart = ({ timeline }) => {
-  if (!timeline.length) return <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No timeline data yet.</div>;
+  if (!timeline.length) return <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No timeline data yet. Submit jobs and click TICK or RUN.</div>;
 
   const pids = [...new Set(timeline.filter(t => t[0] !== -1).map(t => t[0]))].sort((a, b) => a - b);
   const maxTick = Math.max(...timeline.map(t => t[2])) + 1;
@@ -140,7 +139,7 @@ const GanttChart = ({ timeline }) => {
 
 // ─── PROCESS TABLE ──────────────────────────────────────────────────────────
 const ProcessTable = ({ jobs }) => {
-  if (!jobs.length) return <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No processes.</div>;
+  if (!jobs.length) return <div style={{ color: C.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No processes. Submit a job above.</div>;
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: mono }}>
@@ -153,7 +152,7 @@ const ProcessTable = ({ jobs }) => {
         </thead>
         <tbody>
           {jobs.map(j => (
-            <tr key={j.pid} style={{ background: j.state === "THROTTLED" ? "#ff005510" : "transparent" }}>
+            <tr key={j.pid} style={{ background: j.state === "THROTTLED" ? "#ff005510" : j.state === "EXIT" ? "#ffffff08" : "transparent" }}>
               <td style={{ padding: "7px 10px", color: C.text, borderBottom: `1px solid ${C.border}40` }}>{j.pid}</td>
               <td style={{ padding: "7px 10px", color: C.text, borderBottom: `1px solid ${C.border}40` }}>{j.role}</td>
               <td style={{ padding: "7px 10px", borderBottom: `1px solid ${C.border}40` }}><Pill label={j.job_type} color={JOB_COLORS[j.job_type] || C.textMuted} /></td>
@@ -219,7 +218,7 @@ const DeadlockPanel = ({ status }) => (
         <div style={{ color: status.safe_state ? C.green : C.red, fontWeight: 700, fontSize: 14 }}>
           {status.safe_state ? "SAFE STATE" : "UNSAFE \u2014 DEADLOCK RISK"}
         </div>
-        <div style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>Banker's Algorithm (Nikhil)</div>
+        <div style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>Banker's Algorithm</div>
       </div>
     </div>
     <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Available Resources</div>
@@ -265,9 +264,9 @@ const DiskSeeksPanel = ({ data }) => {
   );
   return (
     <div>
-      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>Head: <span style={{ color: C.accent }}>{data.head}</span> {data.note && <span style={{ color: C.yellow }}> (stub)</span>}</div>
-      {renderLine(data.cscan_order, C.blue, "C-SCAN (Sanat)")}
-      {renderLine(data.sstf_order, C.orange, "SSTF (Sanat)")}
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>Head: <span style={{ color: C.accent }}>{data.head}</span></div>
+      {renderLine(data.cscan_order, C.blue, "C-SCAN")}
+      {renderLine(data.sstf_order, C.orange, "SSTF")}
     </div>
   );
 };
@@ -281,14 +280,16 @@ const TerminalPanel = ({ lines }) => {
       background: "#0d0d11", borderRadius: 8, padding: 12, fontFamily: mono,
       fontSize: 11, lineHeight: 1.6, maxHeight: 220, overflowY: "auto", border: `1px solid ${C.border}`,
     }}>
-      <div style={{ color: C.green, marginBottom: 4 }}>AcadOS Terminal v0.2</div>
+      <div style={{ color: C.green, marginBottom: 4 }}>AcadOS Terminal v0.3</div>
       <div style={{ color: C.textMuted, marginBottom: 8 }}>{"\u2500".repeat(40)}</div>
       {lines.map((line, i) => {
         let color = C.text;
         if (line.includes("THROTTLED") || line.includes("ABUSE")) color = C.red;
+        else if (line.includes("EXIT") || line.includes("exited")) color = C.textMuted;
         else if (line.includes("EXAM") || line.includes("preempt")) color = C.exam;
         else if (line.includes("PRACTICE")) color = C.practice;
         else if (line.includes("RESEARCH")) color = C.research;
+        else if (line.includes("EVALUATION")) color = C.evaluation;
         else if (line.includes("[INFO]")) color = C.blue;
         else if (line.includes("[WARN]")) color = C.yellow;
         else if (line.includes("[ERROR]")) color = C.red;
@@ -317,7 +318,7 @@ const DbLogsPanel = ({ logs }) => (
 
 // ─── JOB FORM ───────────────────────────────────────────────────────────────
 const JobForm = ({ onSubmit }) => {
-  const [form, setForm] = useState({ pid: "1", user_id: "", role: "1", job_type: "3", deadline_offset: "3600" });
+  const [form, setForm] = useState({ pid: "1", user_id: "", role: "1", job_type: "3", deadline_offset: "300" });
   const handleSubmit = () => {
     if (!form.pid) return;
     onSubmit({
@@ -349,7 +350,7 @@ const JobForm = ({ onSubmit }) => {
       <div style={{ flex: "0 0 120px" }}>
         <label style={{ fontSize: 10, color: C.textMuted, display: "block", marginBottom: 3 }}>Job Type</label>
         <select style={{ ...stl, appearance: "none" }} value={form.job_type} onChange={e => setForm(f => ({ ...f, job_type: e.target.value }))}>
-          <option value="1">PRACTICE</option><option value="2">RESEARCH</option><option value="3">EXAM</option><option value="4">EVALUATION</option>
+          <option value="3">EXAM</option><option value="4">EVALUATION</option><option value="2">RESEARCH</option><option value="1">PRACTICE</option>
         </select>
       </div>
       <div style={{ flex: "0 0 90px" }}>
@@ -403,17 +404,48 @@ export default function AcadOSDashboard() {
   const [jobs, setJobs] = useState([]);
   const [timeline, setTimeline] = useState([]);
   const [termLines, setTermLines] = useState([]);
-  const [demoMode, setDemoMode] = useState(true);
+  const [demoMode, setDemoMode] = useState(false);
   const [memStatus, setMemStatus] = useState({ total_frames: 32, free_frames: 32, page_faults: {}, tlb_hits: 0, tlb_misses: 0 });
   const [dlStatus, setDlStatus] = useState({ available: { CPU: 4, MEM_BLOCK: 8 }, safe_state: true });
   const [diskData, setDiskData] = useState({ cscan_order: [], sstf_order: [], head: 50 });
   const [dbLogs, setDbLogs] = useState([]);
+  const [backendOk, setBackendOk] = useState(false);
+  const runRef = useRef(false);
 
   const apiBase = "http://localhost:8000";
   const apiFetch = async (path, opts = {}) => {
     const res = await fetch(`${apiBase}${path}`, { headers: { "Content-Type": "application/json" }, ...opts });
     return res.json();
   };
+
+  // Check backend on mount
+  useEffect(() => {
+    if (!demoMode) {
+      apiFetch("/").then(() => setBackendOk(true)).catch(() => setBackendOk(false));
+    }
+  }, [demoMode]);
+
+  // Refresh all panels from backend
+  const refreshAll = useCallback(async () => {
+    try {
+      const [tl, updated, mem, dl, disk, db] = await Promise.all([
+        apiFetch("/timeline"),
+        apiFetch("/jobs"),
+        apiFetch("/memory/status"),
+        apiFetch("/deadlock/status"),
+        apiFetch("/io/disk"),
+        apiFetch("/db/logs"),
+      ]);
+      setTimeline(tl);
+      setJobs(updated);
+      setMemStatus(mem);
+      setDlStatus(dl);
+      setDiskData(disk);
+      setDbLogs(db.logs || []);
+    } catch (e) {
+      // silently ignore if some endpoints fail
+    }
+  }, []);
 
   useEffect(() => {
     if (demoMode) {
@@ -426,21 +458,23 @@ export default function AcadOSDashboard() {
         "[TICK 00] PID 1 (EXAM)       \u2192 RUNNING   urgency=0.0133",
         "[TICK 05] Aging: Tier-2 RESEARCH jobs boosted +0.1",
         "[TICK 08] PID 5 (EVALUATION) \u2192 RUNNING   preempted PID 1 \u2192 READY",
+        "[TICK 08] PID 1 (EXAM)       \u2192 EXIT      cpu_used=8",
         "[TICK 12] PID 3 (RESEARCH)   \u2192 RUNNING",
+        "[TICK 14] PID 5 (EVALUATION) \u2192 EXIT      cpu_used=6",
         "[TICK 15] PID 2 (PRACTICE)   \u2192 RUNNING",
         "[WARN] PID 4 cpu_used=45 > 2\u00d7budget \u2014 ABUSE DETECTED",
         "[TICK 20] PID 4 (PRACTICE)   \u2192 THROTTLED  abuse_flag=True",
-        "[INFO] Note: Preempted jobs go RUNNING\u2192READY (no PREEMPTED state)",
+        "[TICK 22] PID 3 (RESEARCH)   \u2192 EXIT      cpu_used=10",
         "[INFO] Simulation complete \u2014 50 ticks",
       ]);
       setMemStatus({ total_frames: 32, free_frames: 12, page_faults: { EXAM: 2, RESEARCH: 5, PRACTICE: 14 }, tlb_hits: 38, tlb_misses: 12 });
       setDlStatus({ available: { CPU: 2, MEM_BLOCK: 4 }, safe_state: true, allocation_count: 5 });
-      setDiskData({ cscan_order: [62, 64, 66, 95, 119, 123, 180, 11, 34], sstf_order: [62, 64, 66, 34, 11, 95, 119, 123, 180], head: 50, note: "Stub" });
+      setDiskData({ cscan_order: [62, 64, 66, 95, 119, 123, 180, 11, 34], sstf_order: [62, 64, 66, 34, 11, 95, 119, 123, 180], head: 50 });
       setDbLogs(DEMO_JOBS.map(j => ({ pid: j.pid, job_type: j.job_type, role: j.role, cpu_used: j.cpu_used })));
     }
   }, [demoMode]);
 
-  const addLine = useCallback((l) => setTermLines(p => [...p.slice(-100), l]), []);
+  const addLine = useCallback((l) => setTermLines(p => [...p.slice(-200), l]), []);
 
   const handleSubmitJob = useCallback(async (jobData) => {
     if (demoMode) {
@@ -453,43 +487,87 @@ export default function AcadOSDashboard() {
     try {
       const res = await apiFetch("/jobs", { method: "POST", body: JSON.stringify(jobData) });
       addLine(`[INFO] ${res.message}`);
-      const [updated, mem, dl] = await Promise.all([apiFetch("/jobs"), apiFetch("/memory/status"), apiFetch("/deadlock/status")]);
-      setJobs(updated); setMemStatus(mem); setDlStatus(dl);
-    } catch (e) { addLine(`[ERROR] ${e.message}`); }
-  }, [demoMode, addLine]);
+      await refreshAll();
+    } catch (e) { addLine(`[ERROR] Backend not reachable: ${e.message}`); }
+  }, [demoMode, addLine, refreshAll]);
 
   const handleTick = useCallback(async () => {
     if (demoMode) { setTick(t => t + 1); addLine(`[TICK ${tick}] Demo tick`); return; }
     try {
       const res = await apiFetch("/scheduler/tick");
       setTick(res.tick + 1);
-      addLine(`[TICK ${String(res.tick).padStart(2, '0')}] ${res.running_pid ? `PID ${res.running_pid} (${res.running_job_type}) \u2192 RUNNING` : 'IDLE'}${res.preempted_pid ? ` preempted PID ${res.preempted_pid} \u2192 READY` : ''}`);
-      const [tl, updated, mem, dl] = await Promise.all([apiFetch("/timeline"), apiFetch("/jobs"), apiFetch("/memory/status"), apiFetch("/deadlock/status")]);
-      setTimeline(tl); setJobs(updated); setMemStatus(mem); setDlStatus(dl);
+
+      let line = `[TICK ${String(res.tick).padStart(2, '0')}] `;
+      if (res.running_pid) {
+        line += `PID ${res.running_pid} (${res.running_job_type}) \u2192 RUNNING`;
+        if (res.preempted_pid) line += `  preempted PID ${res.preempted_pid} \u2192 READY`;
+      } else {
+        line += "IDLE";
+      }
+      addLine(line);
+
+      if (res.exited_pid) {
+        addLine(`[INFO] PID ${res.exited_pid} \u2192 EXIT (completed)`);
+      }
+
+      await refreshAll();
     } catch (e) { addLine(`[ERROR] ${e.message}`); }
-  }, [demoMode, tick, addLine]);
+  }, [demoMode, tick, addLine, refreshAll]);
 
   const handleRun = useCallback(async () => {
-    if (isRunning) { setIsRunning(false); addLine("[INFO] Stopped"); return; }
+    if (isRunning) {
+      runRef.current = false;
+      setIsRunning(false);
+      addLine("[INFO] Stopped");
+      return;
+    }
     if (demoMode) { addLine("[INFO] Demo mode \u2014 data preloaded"); return; }
+
     setIsRunning(true);
+    runRef.current = true;
     addLine("[INFO] Running 50-tick simulation...");
+
     try {
-      await apiFetch("/simulation/run", { method: "POST", body: JSON.stringify({ total_ticks: 50, tick_delay_ms: 150 }) });
-      const [tl, updated, mem, dl] = await Promise.all([apiFetch("/timeline"), apiFetch("/jobs"), apiFetch("/memory/status"), apiFetch("/deadlock/status")]);
-      setTimeline(tl); setJobs(updated); setTick(tl.length); setMemStatus(mem); setDlStatus(dl);
+      for (let i = 0; i < 50; i++) {
+        if (!runRef.current) break;
+
+        const res = await apiFetch("/scheduler/tick");
+        setTick(res.tick + 1);
+
+        let line = `[TICK ${String(res.tick).padStart(2, '0')}] `;
+        if (res.running_pid) {
+          line += `PID ${res.running_pid} (${res.running_job_type}) \u2192 RUNNING`;
+          if (res.preempted_pid) line += `  preempted PID ${res.preempted_pid}`;
+        } else {
+          line += "IDLE";
+        }
+        addLine(line);
+
+        if (res.exited_pid) {
+          addLine(`[INFO] PID ${res.exited_pid} \u2192 EXIT (completed)`);
+        }
+
+        await refreshAll();
+
+        // Small delay so user can see progress
+        await new Promise(r => setTimeout(r, 150));
+      }
       addLine("[INFO] Simulation complete");
-    } catch (e) { addLine(`[ERROR] ${e.message}`); }
+    } catch (e) {
+      addLine(`[ERROR] ${e.message}`);
+    }
     setIsRunning(false);
-  }, [isRunning, demoMode, addLine]);
+    runRef.current = false;
+  }, [isRunning, demoMode, addLine, refreshAll]);
 
   const handleReset = useCallback(async () => {
+    runRef.current = false;
+    setIsRunning(false);
     if (!demoMode) { try { await apiFetch("/scheduler/reset", { method: "POST" }); } catch {} }
     setTick(0); setJobs([]); setTimeline([]); setTermLines(["[INFO] Simulation reset"]);
     setMemStatus({ total_frames: 32, free_frames: 32, page_faults: {}, tlb_hits: 0, tlb_misses: 0 });
     setDlStatus({ available: { CPU: 4, MEM_BLOCK: 8 }, safe_state: true });
     setDiskData({ cscan_order: [], sstf_order: [], head: 50 }); setDbLogs([]);
-    setDemoMode(false);
   }, [demoMode]);
 
   return (
@@ -503,22 +581,32 @@ export default function AcadOSDashboard() {
         }}>A</div>
         <div>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em" }}>
-            AcadOS <span style={{ color: C.accent, fontSize: 14, fontWeight: 400 }}>v0.2</span>
+            AcadOS <span style={{ color: C.accent, fontSize: 14, fontWeight: 400 }}>v0.3</span>
           </h1>
-          <p style={{ margin: 0, fontSize: 11, color: C.textMuted }}>Academic OS Simulator — aligned with Shakti's shared.py</p>
+          <p style={{ margin: 0, fontSize: 11, color: C.textMuted }}>Academic OS Simulator</p>
         </div>
         <div style={{ flex: 1 }} />
+        {!demoMode && (
+          <div style={{
+            padding: "4px 12px", borderRadius: 6, fontSize: 10, fontFamily: mono,
+            background: backendOk ? C.green + "15" : C.red + "15",
+            color: backendOk ? C.green : C.red,
+            border: `1px solid ${backendOk ? C.green : C.red}30`,
+          }}>
+            {backendOk ? "Backend Connected" : "Backend Offline \u2014 start: uvicorn api:app --port 8000"}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 20, fontSize: 11 }}>
           {[
             { label: "Scheduler", color: C.accent, status: "live" },
             { label: "Memory", color: C.green, status: "live" },
             { label: "Deadlock", color: C.red, status: "live" },
-            { label: "I/O", color: C.orange, status: "stub" },
+            { label: "I/O", color: C.orange, status: "live" },
             { label: "Foundation", color: C.blue, status: "live" },
           ].map(m => (
             <div key={m.label} style={{ textAlign: "center" }}>
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: m.status === "live" ? m.color : C.textMuted, margin: "0 auto 4px", boxShadow: m.status === "live" ? `0 0 6px ${m.color}60` : "none" }} />
-              <div style={{ color: m.status === "live" ? C.textMuted : C.textMuted + "80", fontSize: 10 }}>{m.label}</div>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: m.color, margin: "0 auto 4px", boxShadow: `0 0 6px ${m.color}60` }} />
+              <div style={{ color: C.textMuted, fontSize: 10 }}>{m.label}</div>
             </div>
           ))}
         </div>
@@ -534,15 +622,15 @@ export default function AcadOSDashboard() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
         <Panel title="CPU Gantt Chart" icon={"\uD83D\uDCCA"} span={2}><GanttChart timeline={timeline} /></Panel>
         <Panel title="Process Table" icon={"\uD83D\uDDA5\uFE0F"} span={2}><ProcessTable jobs={jobs} /></Panel>
-        <Panel title="Memory Manager (Ragini)" icon={"\uD83E\uDDE0"}><MemoryPanel status={memStatus} /></Panel>
-        <Panel title="Banker's Algorithm (Nikhil)" icon={"\uD83D\uDD12"}><DeadlockPanel status={dlStatus} /></Panel>
-        <Panel title="Disk Scheduling (Sanat)" icon={"\uD83D\uDCBF"}><DiskSeeksPanel data={diskData} /></Panel>
-        <Panel title="Job Logs (acados.db)" icon={"\uD83D\uDDC4\uFE0F"}><DbLogsPanel logs={dbLogs} /></Panel>
+        <Panel title="Memory Manager" icon={"\uD83E\uDDE0"}><MemoryPanel status={memStatus} /></Panel>
+        <Panel title="Banker's Algorithm" icon={"\uD83D\uDD12"}><DeadlockPanel status={dlStatus} /></Panel>
+        <Panel title="Disk Scheduling" icon={"\uD83D\uDCBF"}><DiskSeeksPanel data={diskData} /></Panel>
+        <Panel title="Job Logs" icon={"\uD83D\uDDC4\uFE0F"}><DbLogsPanel logs={dbLogs} /></Panel>
         <Panel title="Terminal Output" icon={"\u2328\uFE0F"} span={2}><TerminalPanel lines={termLines} /></Panel>
       </div>
 
       <div style={{ marginTop: 20, padding: "12px 0", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textMuted }}>
-        <span>AcadOS — Sachi \u2022 Ragini \u2022 Nikhil \u2022 Shakti \u2022 Sanat</span>
+        <span>AcadOS \u2014 Sachi \u2022 Ragini \u2022 Nikhil \u2022 Shakti \u2022 Sanat</span>
         <span>Dept. CSE (AI & ML) | A.Y. 2025\u201326</span>
       </div>
     </div>

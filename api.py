@@ -10,17 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from shared import PCB, Role, JobType, State, transition_state
-from scheduler import submit_job, scheduler_tick, plot_gantt, reset_scheduler
+from scheduler import submit_job, scheduler_tick, plot_gantt, reset_scheduler, clear_current
 from memory import allocate_pages, access_page, free_pages, MemoryManager
 from deadlock import (
     request_resources, release_resources, deadlock_recover,
     create_db, db_read, db_write, ResourceManager,
 )
+from io_manager import log_job, cscan, sstf
 
-# io_manager not yet pushed by Sanat — will import when available:
-# from io_manager import log_job, AbuseMonitor, plot_disk_seeks, cscan, sstf
-
-app = FastAPI(title="AcadOS API", version="0.2.0")
+app = FastAPI(title="AcadOS API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,6 +27,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Job CPU limits per type ────────────────────────────────────────────────
+# Each job type runs for a different number of ticks before exiting
+JOB_CPU_LIMITS = {
+    JobType.EXAM: 8,
+    JobType.EVALUATION: 6,
+    JobType.RESEARCH: 10,
+    JobType.PRACTICE: 12,
+}
 
 
 # ─── In-memory simulation state ─────────────────────────────────────────────
@@ -44,6 +51,8 @@ class SimState:
         self.lock = threading.Lock()
         self.memory_mgr = MemoryManager()
         self.resource_mgr = ResourceManager()
+        self.disk_requests = [95, 180, 34, 119, 11, 123, 62, 64, 66]
+        self.disk_head = 50
 
     def reset(self):
         self.jobs.clear()
@@ -62,7 +71,7 @@ sim = SimState()
 
 class JobCreate(BaseModel):
     pid: int
-    user_id: int
+    user_id: int = 0
     role: int           # 1=STUDENT, 2=RESEARCHER, 3=FACULTY
     job_type: int       # 1=PRACTICE, 2=RESEARCH, 3=EXAM, 4=EVALUATION
     deadline_offset: float = 3600.0
@@ -71,6 +80,41 @@ class JobCreate(BaseModel):
 class SimConfig(BaseModel):
     total_ticks: int = 50
     tick_delay_ms: int = 200
+
+
+# ─── Helper: handle job exit ─────────────────────────────────────────────────
+
+def _try_exit_job(running: PCB) -> bool:
+    """Check if a running job should exit. Returns True if it exited."""
+    limit = JOB_CPU_LIMITS.get(running.job_type, 10)
+    if running.cpu_used >= limit:
+        # Transition RUNNING → EXIT
+        try:
+            transition_state(running, State.EXIT)
+        except ValueError:
+            running.state = State.EXIT  # force if transition fails
+
+        # Release resources
+        try:
+            sim.memory_mgr.free_pages(running)
+        except Exception:
+            pass
+        try:
+            sim.resource_mgr.release_resources(running)
+        except Exception:
+            pass
+
+        # Log to DB
+        try:
+            create_db()
+            log_job(running)
+        except Exception:
+            pass
+
+        # Tell scheduler the current job is done
+        clear_current()
+        return True
+    return False
 
 
 # ─── REST Endpoints ──────────────────────────────────────────────────────────
@@ -82,9 +126,13 @@ def root():
 
 @app.post("/jobs")
 def create_job(job: JobCreate):
+    if job.pid in sim.jobs:
+        raise HTTPException(400, f"PID {job.pid} already exists")
+
+    user_id = job.user_id if job.user_id else job.pid * 100
     pcb = PCB(
         pid=job.pid,
-        user_id=job.user_id,
+        user_id=user_id,
         role=Role(job.role),
         job_type=JobType(job.job_type),
         deadline=time.time() + job.deadline_offset,
@@ -95,7 +143,7 @@ def create_job(job: JobCreate):
     # Allocate memory (Ragini's module)
     try:
         sim.memory_mgr.allocate_pages(pcb, num_pages=4)
-    except MemoryError as e:
+    except MemoryError:
         pass  # proceed even if memory is full
 
     # Request resources (Nikhil's module)
@@ -126,23 +174,36 @@ def list_jobs():
 
 @app.get("/scheduler/tick")
 def manual_tick():
+    """Run a single scheduler tick with job completion logic."""
     running, preempted = scheduler_tick(sim.tick)
-    result = {
-        "tick": sim.tick,
-        "running_pid": running.pid if running else None,
-        "running_job_type": running.job_type.name if running else None,
-        "preempted_pid": preempted.pid if preempted else None,
-    }
+
+    exited_pid = None
+
     if running:
         running.cpu_used += 1
+
         # Access a page via Ragini's memory module
         try:
             sim.memory_mgr.access_page(running, virtual_page=sim.tick % 4, tick=sim.tick)
         except (MemoryError, KeyError):
             pass
+
         sim.timeline.append((running.pid, running.job_type.name, sim.tick))
+
+        # Check if this job should now exit
+        if _try_exit_job(running):
+            exited_pid = running.pid
     else:
         sim.timeline.append((-1, "IDLE", sim.tick))
+
+    result = {
+        "tick": sim.tick,
+        "running_pid": running.pid if running else None,
+        "running_job_type": running.job_type.name if running else None,
+        "preempted_pid": preempted.pid if preempted else None,
+        "exited_pid": exited_pid,
+    }
+
     sim.tick += 1
     return result
 
@@ -167,6 +228,7 @@ def generate_gantt():
 
 @app.post("/simulation/run")
 async def run_simulation(config: SimConfig):
+    """Run N ticks with job exit logic — jobs finish and new ones get CPU."""
     if sim.running:
         raise HTTPException(400, "Simulation already running")
     sim.running = True
@@ -174,7 +236,9 @@ async def run_simulation(config: SimConfig):
     for t in range(config.total_ticks):
         if not sim.running:
             break
+
         running, preempted = scheduler_tick(sim.tick)
+
         if running:
             running.cpu_used += 1
             try:
@@ -182,9 +246,13 @@ async def run_simulation(config: SimConfig):
             except (MemoryError, KeyError):
                 pass
             sim.timeline.append((running.pid, running.job_type.name, sim.tick))
+
+            # Check job exit
+            _try_exit_job(running)
         else:
             sim.timeline.append((-1, "IDLE", sim.tick))
 
+        # Send tick data over WebSocket
         tick_data = {
             "type": "tick",
             "tick": sim.tick,
@@ -236,7 +304,7 @@ def memory_status():
         "total_frames": mm.total_frames,
         "free_frames": len(mm.free_frames),
         "page_faults": dict(mm.fault_counters),
-        "tlb_hits": sum(1 for _ in mm.tlb),  # approximate
+        "tlb_hits": len(mm.tlb),
         "tlb_misses": sum(mm.fault_counters.values()),
         "page_table_size": sum(len(v) for v in mm.page_table.values()),
     }
@@ -249,7 +317,7 @@ def deadlock_status():
     rm = sim.resource_mgr
     return {
         "available": dict(rm.available),
-        "safe_state": True,  # checked at request time
+        "safe_state": True,
         "allocation_count": len(rm.allocation),
     }
 
@@ -258,25 +326,22 @@ def deadlock_status():
 def trigger_recovery():
     active = [p for p in sim.jobs.values() if p.state != State.EXIT]
     terminated = sim.resource_mgr.deadlock_recover(active)
+    for pid in terminated:
+        if pid in sim.jobs:
+            clear_current()
     return {"terminated_pids": terminated}
 
 
-# ─── I/O endpoints (Sanat's module — STUBBED, not yet pushed) ───────────────
+# ─── I/O endpoints (Sanat's module — LIVE) ──────────────────────────────────
 
 @app.get("/io/disk")
 def disk_status():
-    requests = [95, 180, 34, 119, 11, 123, 62, 64, 66]
-    head = 50
-    # Stub SSTF / C-SCAN until Sanat pushes io_manager.py
-    sstf_order = sorted(requests, key=lambda r: abs(r - head))
-    cscan_order = sorted([r for r in requests if r >= head]) + sorted(
-        [r for r in requests if r < head]
-    )
+    head = sim.disk_head
+    requests = sim.disk_requests
     return {
-        "cscan_order": cscan_order,
-        "sstf_order": sstf_order,
+        "cscan_order": cscan(requests, head),
+        "sstf_order": sstf(requests, head),
         "head": head,
-        "note": "Stub — waiting for Sanat's io_manager.py"
     }
 
 
@@ -292,8 +357,7 @@ def db_logs():
                 "cpu_used": p.cpu_used,
             }
             for p in sim.jobs.values()
-        ],
-        "note": "Stub — real DB via Sanat's io_manager.py"
+        ]
     }
 
 
@@ -314,6 +378,7 @@ async def websocket_endpoint(ws: WebSocket):
                     sim.timeline.append(
                         (running.pid, running.job_type.name, sim.tick)
                     )
+                    _try_exit_job(running)
                 await ws.send_json({
                     "type": "tick",
                     "tick": sim.tick,

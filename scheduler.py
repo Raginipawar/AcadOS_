@@ -89,6 +89,17 @@ def scheduler_tick(tick_number: int) -> Tuple[Optional[PCB], Optional[PCB]]:
     return (_current, preempted)
 
 
+def clear_current() -> None:
+    """Clear the currently running job (call after a job exits)."""
+    global _current
+    _current = None
+
+
+def get_current() -> Optional[PCB]:
+    """Return the currently running PCB (or None)."""
+    return _current
+
+
 def plot_gantt(timeline_list: list, path: str = "outputs/gantt.png") -> None:
     """
     Draw a colour-coded Gantt chart.
